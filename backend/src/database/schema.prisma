@@ -1,0 +1,116 @@
+generator client {
+  provider = "prisma-client-js"
+  // The container image is debian-based (node:20-bookworm-slim), so the engine
+  // for that platform has to be generated alongside the host one.
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// Only these three are ever written. "Overdue" is worked out when an invoice
+/// is read (see modules/invoices/lifecycle.ts) so it can never go stale.
+/// The @map keeps the column values in SCREAMING_CASE while TypeScript sees the
+/// same casing the API exposes.
+enum InvoiceStatus {
+  Draft   @map("DRAFT")
+  Pending @map("PENDING")
+  Paid    @map("PAID")
+
+  @@map("invoice_status")
+}
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  fullname     String
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  invoices Invoice[]
+
+  @@map("users")
+}
+
+model Customer {
+  id           String   @id @default(uuid()) @db.Uuid
+  fullname     String
+  email        String   @unique
+  mobileNumber String?  @map("mobile_number")
+  address      String?
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  invoices Invoice[]
+
+  // Case-insensitive search hits this column; see the raw index in the migration.
+  @@index([fullname])
+  @@map("customers")
+}
+
+model Invoice {
+  id            String  @id @default(uuid()) @map("invoice_id") @db.Uuid
+  invoiceNumber String  @unique @map("invoice_number")
+  reference     String? @map("invoice_reference")
+
+  // Calendar dates, not instants: an invoice dated 3 June is dated 3 June
+  // everywhere. Postgres `date` has no time zone to get wrong.
+  invoiceDate DateTime @map("invoice_date") @db.Date
+  dueDate     DateTime @map("due_date") @db.Date
+
+  currency       String  @db.Char(3)
+  currencySymbol String  @map("currency_symbol")
+  description    String?
+
+  status InvoiceStatus @default(Draft)
+
+  // Every amount is Decimal, never Float. Prisma hands these back as
+  // Prisma.Decimal (decimal.js), which is exact.
+  taxRate       Decimal @map("tax_rate") @db.Decimal(5, 2)
+  subTotal      Decimal @map("invoice_sub_total") @db.Decimal(14, 2)
+  taxTotal      Decimal @map("total_tax") @db.Decimal(14, 2)
+  discountTotal Decimal @map("total_discount") @db.Decimal(14, 2)
+  total         Decimal @map("total_amount") @db.Decimal(14, 2)
+  paid          Decimal @default(0) @map("total_paid") @db.Decimal(14, 2)
+  balance       Decimal @map("balance_amount") @db.Decimal(14, 2)
+
+  customerId String   @map("customer_id") @db.Uuid
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Restrict)
+
+  createdById String @map("created_by") @db.Uuid
+  createdBy   User   @relation(fields: [createdById], references: [id], onDelete: Restrict)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  lines InvoiceLine[]
+
+  // Sortable columns get their own index. The composite one carries the whole
+  // status filter, including the derived Overdue, which is always a predicate
+  // over exactly these two columns.
+  @@index([invoiceDate])
+  @@index([dueDate])
+  @@index([total])
+  @@index([status, dueDate])
+  @@index([customerId])
+  @@map("invoices")
+}
+
+model InvoiceLine {
+  id        String  @id @default(uuid()) @db.Uuid
+  invoiceId String  @map("invoice_id") @db.Uuid
+  invoice   Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  name     String
+  quantity Int
+  rate     Decimal @db.Decimal(14, 2)
+  /// quantity x rate, stored so a line can be read back without re-deriving it.
+  amount   Decimal @db.Decimal(14, 2)
+  /// Keeps entry order stable once invoices are allowed more than one line.
+  sequence Int     @default(0)
+
+  @@index([invoiceId])
+  @@map("invoice_lines")
+}

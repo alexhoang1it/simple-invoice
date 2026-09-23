@@ -1,0 +1,73 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-paper text-ink antialiased;
+    font-feature-settings: 'cv02', 'cv03', 'cv04';
+  }
+
+  h1,
+  h2,
+  h3 {
+    @apply font-serif font-semibold tracking-tight;
+  }
+
+  /* One focus treatment everywhere. :focus-visible keeps the ring off mouse
+     clicks while leaving it intact for keyboard users. */
+  :focus-visible {
+    @apply outline-none ring-2 ring-claret/50 ring-offset-2 ring-offset-paper;
+  }
+
+  /* Figures line up in columns when they are tabular. */
+  table {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer components {
+  /* A sheet of paper: the surface every panel sits on. */
+  .sheet {
+    @apply rounded-sheet border border-paper-line bg-paper-raised shadow-card;
+  }
+
+  .field-label {
+    @apply mb-1.5 block text-2xs font-semibold uppercase tracking-wider text-ink-faint;
+  }
+
+  .field-input {
+    @apply w-full rounded-sheet border border-paper-edge bg-paper-raised px-3 py-2 text-sm
+           text-ink placeholder:text-ink-faint/70
+           focus:border-claret focus:outline-none focus:ring-2 focus:ring-claret/25;
+  }
+
+  .field-input[aria-invalid='true'] {
+    @apply border-claret focus:ring-claret/30;
+  }
+
+  .field-error {
+    @apply mt-1 block text-xs text-claret;
+  }
+
+  /* Column headings on the ledger table. */
+  .col-head {
+    @apply whitespace-nowrap px-4 py-2.5 text-left text-2xs font-semibold uppercase
+           tracking-wider text-ink-faint;
+  }
+}
+
+@layer utilities {
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}

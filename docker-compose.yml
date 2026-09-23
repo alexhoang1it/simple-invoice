@@ -1,0 +1,94 @@
+# SimpleInvoice — the whole stack.
+#
+#   cp .env.example .env
+#   docker compose up --build
+#
+# Ports are deliberately off the defaults so this can run alongside anything else
+# you have listening on 3000/5432/8080.
+#
+#   web  http://localhost:8081   nginx serving the SPA, proxying /api to the API
+#   api  http://localhost:4000   NestJS, OpenAPI at /api/docs
+#   db   localhost:5433          PostgreSQL 16
+#
+# Ordering is enforced with healthchecks, not just depends_on: Postgres accepts
+# TCP a good few seconds before it will answer a query.
+
+name: simple-invoice
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-simpleinvoice}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-simpleinvoice}
+      # Deterministic collation, so ORDER BY does not depend on the host locale.
+      POSTGRES_INITDB_ARGS: '--encoding=UTF8 --locale=C'
+    ports:
+      - '${DB_PORT:-5433}:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-simpleinvoice} -d ${POSTGRES_DB:-simpleinvoice}']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  # Runs the migrations and loads the demo data, then exits. Keeping it out of
+  # the API entrypoint means the schema is applied exactly once however many API
+  # replicas come up, and `docker compose up` re-seeds cleanly.
+  migrate:
+    build:
+      context: ./backend
+    restart: 'no'
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-simpleinvoice}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-simpleinvoice}?schema=public
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      SEED_EMAIL: ${SEED_EMAIL:-reviewer@simpleinvoice.dev}
+      SEED_PASSWORD: ${SEED_PASSWORD:-invoice2026}
+      SEED_NAME: ${SEED_NAME:-Ops Reviewer}
+      SEED_INVOICES: ${SEED_INVOICES:-32}
+    command: ["sh", "-c", "npx prisma migrate deploy --schema src/database/schema.prisma && node dist/src/database/seed/seed.js"]
+
+  api:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-simpleinvoice}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-simpleinvoice}?schema=public
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_TTL_SECONDS: ${JWT_TTL_SECONDS:-3600}
+      # The browser talks to the web origin and nginx forwards from there, so
+      # that is the only origin the API needs to allow.
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8081}
+      PAGE_SIZE_DEFAULT: ${PAGE_SIZE_DEFAULT:-10}
+      PAGE_SIZE_MAX: ${PAGE_SIZE_MAX:-100}
+    ports:
+      - '${API_PORT:-4000}:4000'
+    init: true
+
+  web:
+    build:
+      context: ./frontend
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - '${WEB_PORT:-8081}:8080'
+
+volumes:
+  pgdata:
+    name: simple-invoice-pgdata
